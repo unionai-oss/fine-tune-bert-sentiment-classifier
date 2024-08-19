@@ -1,11 +1,12 @@
-"""Runs ML workflow to fine-tune BERT model on a dataset.
+"""Runs ML workflow to fine-tune BERT model on a dataset for sentiment analysis.
 
+AI Pipeline:
 Download dataset
 Download model weights
-Train model and upload data to wandb
-Run a second workflow with another model and compare models
-Upload model to Hugging Face
-
+Visualize dataset
+Train model
+Evaluate model
+Save model to Hugging Face hub
 """
 
 # %% import libraries
@@ -181,10 +182,10 @@ def train_model(model_name: str,
 
     # Use a small subset such that finetuning completes
     small_train_dataset = (
-        dataset["train"].shuffle(seed=42).select(range(10)).map(tokenizer_function)
+        dataset["train"].shuffle(seed=42).select(range(500)).map(tokenizer_function)
     )
     small_eval_dataset = (
-        dataset["test"].shuffle(seed=42).select(range(5)).map(tokenizer_function)
+        dataset["test"].shuffle(seed=42).select(range(100)).map(tokenizer_function)
     )
 
     def compute_metrics(eval_pred):
@@ -225,7 +226,7 @@ def train_model(model_name: str,
 # %% Evaluate model
 @task(
     container_image=image,
-    requests=Resources(cpu="2", mem="4Gi", gpu="1"),  # Using GPU for faster evaluation
+    requests=Resources(cpu="4", mem="12Gi", gpu="1"),  # Using GPU for faster evaluation
 )
 def evaluate_model(
     model: BertForSequenceClassification,
@@ -246,7 +247,7 @@ def evaluate_model(
         return tokenizer(examples["text"], padding="max_length", truncation=True)
 
     # Use a small subset (100 examples) for evaluation
-    eval_dataset = dataset["test"].shuffle(seed=42).select(range(100)).map(tokenize_function)
+    eval_dataset = dataset["test"].shuffle(seed=42).select(range(200)).map(tokenize_function)
 
     def compute_metrics(eval_pred):
         logits, labels = eval_pred
