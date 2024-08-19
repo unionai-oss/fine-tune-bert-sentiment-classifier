@@ -32,6 +32,7 @@ image = ImageSpec(
         "matplotlib==3.8.3",
         "torch==2.0.1",
         "accelerate==0.27.2",
+        "scikit-learn==1.5.1"
     ],
 )
 
@@ -222,6 +223,66 @@ def train_model(model_name: str,
     return model
 
 # %% Evaluate model
+@task(
+    container_image=image,
+    requests=Resources(cpu="2", mem="4Gi", gpu="1"),  # Using GPU for faster evaluation
+)
+def evaluate_model(
+    model: BertForSequenceClassification,
+    dataset_cache_dir: FlyteDirectory,
+    model_cache_dir: FlyteDirectory,
+) -> dict:
+    from datasets import load_dataset
+    from transformers import AutoTokenizer, Trainer, TrainingArguments
+    from sklearn.metrics import accuracy_score, f1_score, precision_score, recall_score
+    import numpy as np
+    import torch
+
+    # Load the test dataset and tokenizer
+    dataset = load_dataset("imdb", cache_dir=dataset_cache_dir)
+    tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased", cache_dir=model_cache_dir)
+
+    def tokenize_function(examples):
+        return tokenizer(examples["text"], padding="max_length", truncation=True)
+
+    # Use a small subset (100 examples) for evaluation
+    eval_dataset = dataset["test"].shuffle(seed=42).select(range(100)).map(tokenize_function)
+
+    def compute_metrics(eval_pred):
+        logits, labels = eval_pred
+        predictions = np.argmax(logits, axis=-1)
+        accuracy = accuracy_score(labels, predictions)
+        f1 = f1_score(labels, predictions, average="weighted")
+        precision = precision_score(labels, predictions, average="weighted")
+        recall = recall_score(labels, predictions, average="weighted")
+        return {
+            "accuracy": accuracy,
+            "f1": f1,
+            "precision": precision,
+            "recall": recall,
+        }
+
+    # Initialize Trainer for evaluation
+    training_args = TrainingArguments(
+        output_dir=".", 
+        per_device_eval_batch_size=16, 
+        dataloader_drop_last=False,
+    )
+
+    trainer = Trainer(
+        model=model,
+        args=training_args,
+        eval_dataset=eval_dataset,
+        compute_metrics=compute_metrics,
+    )
+
+    # Run evaluation
+    eval_results = trainer.evaluate()
+
+    print(f"Evaluation results on 100 examples: {eval_results}")
+
+    return eval_results
+
 
 # %% save model
 @task(
@@ -280,6 +341,18 @@ def save_model(model: BertForSequenceClassification, repo_name: str) -> str:
 
     
 
+# @workflow
+# def bert_ft(model: str = "bert-base-uncased", repo_name: str = "my-model"): 
+#     dataset_cache_dir = download_dataset()
+#     model_cache_dir = download_model(model)
+#     visualize_data(dataset_cache_dir=dataset_cache_dir)
+#     model = train_model(model_name=model, 
+#                         dataset_cache_dir=dataset_cache_dir, 
+#                         model_cache_dir=model_cache_dir)
+#     save_model(model=model, repo_name=repo_name)
+#     return model
+
+# %% Workflow
 @workflow
 def bert_ft(model: str = "bert-base-uncased", repo_name: str = "my-model"): 
     dataset_cache_dir = download_dataset()
@@ -288,5 +361,8 @@ def bert_ft(model: str = "bert-base-uncased", repo_name: str = "my-model"):
     model = train_model(model_name=model, 
                         dataset_cache_dir=dataset_cache_dir, 
                         model_cache_dir=model_cache_dir)
+    eval_results = evaluate_model(model=model, 
+                                  dataset_cache_dir=dataset_cache_dir, 
+                                  model_cache_dir=model_cache_dir)
     save_model(model=model, repo_name=repo_name)
-    return model
+    return eval_results
