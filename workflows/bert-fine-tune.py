@@ -7,6 +7,7 @@ Visualize dataset
 Train model
 Evaluate model
 Save model to Hugging Face hub
+Predict sentiment from text
 """
 
 # %% import libraries
@@ -340,22 +341,32 @@ def save_model(model: BertForSequenceClassification, repo_name: str) -> str:
         )
     return f"Model uploaded to Hugging Face Hub: {repo_name}"
 
-    
+# %% Predict sentiment from text
+@task(
+    container_image=image,
+    requests=Resources(cpu="2", mem="2Gi", gpu="1"),
+    retries=2,
+)
+def predict_sentiment(model: BertForSequenceClassification, text: str, model_cache_dir: FlyteDirectory) -> dict:
+    from transformers import AutoTokenizer, pipeline
 
-# @workflow
-# def bert_ft(model: str = "bert-base-uncased", repo_name: str = "my-model"): 
-#     dataset_cache_dir = download_dataset()
-#     model_cache_dir = download_model(model)
-#     visualize_data(dataset_cache_dir=dataset_cache_dir)
-#     model = train_model(model_name=model, 
-#                         dataset_cache_dir=dataset_cache_dir, 
-#                         model_cache_dir=model_cache_dir)
-#     save_model(model=model, repo_name=repo_name)
-#     return model
+    # Load the tokenizer
+    tokenizer = AutoTokenizer.from_pretrained("bert-base-uncased", cache_dir=model_cache_dir)
+
+    # Initialize the pipeline for sentiment analysis
+    nlp_pipeline = pipeline("text-classification", model=model, tokenizer=tokenizer)
+
+    # Perform the prediction
+    prediction = nlp_pipeline(text)
+
+    return prediction[0] 
 
 # %% Workflow
 @workflow
-def bert_ft(model: str = "bert-base-uncased", repo_name: str = "my-model"): 
+def bert_ft(model: str = "bert-base-uncased",
+            repo_name: str = "my-model",
+            test_text: str = "I love this movie!"):
+    
     dataset_cache_dir = download_dataset()
     model_cache_dir = download_model(model)
     visualize_data(dataset_cache_dir=dataset_cache_dir)
@@ -366,4 +377,9 @@ def bert_ft(model: str = "bert-base-uncased", repo_name: str = "my-model"):
                                   dataset_cache_dir=dataset_cache_dir, 
                                   model_cache_dir=model_cache_dir)
     save_model(model=model, repo_name=repo_name)
+    
+    # Pass the model and other needed arguments directly to the predict_sentiment task
+    prediction = predict_sentiment(model=model, text=test_text, model_cache_dir=model_cache_dir)
+    
+    # Return results as a JSON serializable object
     return eval_results
