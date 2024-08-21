@@ -8,9 +8,12 @@ Train model
 Evaluate model
 Save model to Hugging Face hub
 Predict sentiment from text
+
+Note: this workflow can be broken into modular python files for better organization.
 """
 
-# %% import libraries
+# %% import libraries & Create container image
+# ---------------------------
 from pathlib import Path
 import os
 import io
@@ -39,6 +42,7 @@ image = ImageSpec(
 )
 
 # %% download dataset
+# ---------------------------
 @task(
     container_image=image,
     cache=True,
@@ -56,6 +60,7 @@ def download_dataset() -> FlyteDirectory:
     return dataset_cache_dir
 
 # %% download model
+# ---------------------------
 @task(
     container_image=image,
     cache=True,
@@ -72,7 +77,9 @@ def download_model(model: str) -> FlyteDirectory:
     AutoModelForSequenceClassification.from_pretrained(model, cache_dir=model_cache_dir)
     return model_cache_dir
 
+
 # %% visualize data
+# ---------------------------
 @task(
     container_image=image,
     enable_deck=True,
@@ -82,70 +89,100 @@ def visualize_data(dataset_cache_dir: FlyteDirectory):
     from datasets import load_dataset
     import matplotlib.pyplot as plt
     import pandas as pd
+    from flytekit import current_context, Deck
+    import base64
+    from textwrap import dedent
 
     ctx = current_context()
 
+    # Load the dataset
     dataset = load_dataset("imdb", cache_dir=dataset_cache_dir)
-    # train_dataset = dataset["train"]
     train_df = pd.DataFrame(dataset['train'])
     test_df = pd.DataFrame(dataset['test'])
 
-    deck = Deck("IMDB Dataset Analysis")
+    # Create the deck for visualization
+    deck = Deck("Dataset Analysis")
 
-    train_info = f"""
-    ### Training Data
-    - Shape: {train_df.shape}
-    - Columns: {train_df.columns}
-    - Label Distribution: {train_df['label'].value_counts()}
-    """
-    # deck.append(train_info)
-    train_report = html.escape(train_info)
+    # Sample one review from each class (positive and negative) from the training and test datasets
+    train_positive_review = train_df[train_df['label'] == 1].iloc[0]['text']
+    train_negative_review = train_df[train_df['label'] == 0].iloc[0]['text']
+    test_positive_review = test_df[test_df['label'] == 1].iloc[0]['text']
+    test_negative_review = test_df[test_df['label'] == 0].iloc[0]['text']
 
-    test_info = f"""
-    ### Test Data
-    - Shape: {test_df.shape}
-    - Columns: {test_df.columns}
-    - Label Distribution: {test_df['label'].value_counts()}
-    """
-    # deck.append(test_info)
-    test_report = html.escape(test_info)
-
-# Add classification report
-    
-    html_report = dedent(
-        f"""\
-    <h2>Training data</h2>
-    <pre>{train_report}</pre>
-
-    <h2>Test data</h2>
-    <pre>{test_report}</pre>
-    
-    """
-    )
-    deck.append(html_report)
-
-    # Visualize label distribution
+    # Visualize label distribution for training data
     plt.figure(figsize=(10, 5))
-    train_df['label'].value_counts().plot(kind='bar')
+    train_df['label'].value_counts().plot(kind='bar', color='skyblue')
     plt.title('Train Data Label Distribution')
     plt.xlabel('Label')
     plt.ylabel('Count')
     plt.tight_layout()
-    plt.savefig("/tmp/train_label_distribution.png")
-    deck.append("/tmp/train_label_distribution.png")
+    train_label_dist_path = "/tmp/train_label_distribution.png"
+    plt.savefig(train_label_dist_path)
+    plt.close()
 
+    # Visualize label distribution for test data
     plt.figure(figsize=(10, 5))
-    test_df['label'].value_counts().plot(kind='bar')
+    test_df['label'].value_counts().plot(kind='bar', color='lightgreen')
     plt.title('Test Data Label Distribution')
     plt.xlabel('Label')
     plt.ylabel('Count')
     plt.tight_layout()
-    plt.savefig("/tmp/test_label_distribution.png")
-    deck.append("/tmp/test_label_distribution.png")
+    test_label_dist_path = "/tmp/test_label_distribution.png"
+    plt.savefig(test_label_dist_path)
+    plt.close()
 
+    # Convert images to base64 and embed in HTML
+    def image_to_base64(image_path):
+        with open(image_path, "rb") as img_file:
+            return base64.b64encode(img_file.read()).decode("utf-8")
+
+    train_image_base64 = image_to_base64(train_label_dist_path)
+    test_image_base64 = image_to_base64(test_label_dist_path)
+
+    # HTML report with styled text, tables, and embedded images
+    html_report = dedent(f"""
+    <div style="font-family: Arial, sans-serif; line-height: 1.6;">
+        <h2 style="color: #2C3E50;">Dataset Analysis</h2>
+        
+        <h3 style="color: #2980B9;">Training Data Summary</h3>
+        <p>Below is a summary of the training dataset including the distribution of labels.</p>
+        Shape: {train_df.shape} <br>
+        Columns: {train_df.columns} <br>
+        Label Distribution: {train_df['label'].value_counts()} <br>
+        
+        <h3 style="color: #2980B9;">Sample Reviews from Training Data</h3>
+        <p><strong>Positive Review:</strong> {train_positive_review}</p>
+        <p><strong>Negative Review:</strong> {train_negative_review}</p>
+
+        <h3 style="color: #2980B9;">Training Data Label Distribution</h3>
+        <p>The following bar chart shows the distribution of labels in the training dataset:</p>
+        <img src="data:image/png;base64,{train_image_base64}" alt="Train Data Label Distribution" width="600">
+
+        <h3 style="color: #2980B9;">Test Data Summary</h3>
+        <p>Below is a summary of the test dataset including the distribution of labels.</p>
+        Shape: {test_df.shape} <br>
+        Columns: {test_df.columns} <br>
+        Label Distribution: {test_df['label'].value_counts()} <br>
+        
+        <h3 style="color: #2980B9;">Sample Reviews from Test Data</h3>
+        <p><strong>Positive Review:</strong> {test_positive_review}</p>
+        <p><strong>Negative Review:</strong> {test_negative_review}</p>
+
+        <h3 style="color: #2980B9;">Test Data Label Distribution</h3>
+        <p>The following bar chart shows the distribution of labels in the test dataset:</p>
+        <img src="data:image/png;base64,{test_image_base64}" alt="Test Data Label Distribution" width="600">
+    </div>
+    """)
+
+    # Append HTML content to the deck
+    deck.append(html_report)
+
+    # Insert the deck into the context
     ctx.decks.insert(0, deck)
 
+
 # %% train model
+# ---------------------------
 @task(
     container_image=image,
     requests=Resources(cpu="4", mem="12Gi", gpu="1"),
@@ -194,13 +231,6 @@ def train_model(model_name: str,
         predictions = np.argmax(logits, axis=-1)
         return {"accuracy": np.mean(predictions == labels)}
     
-    if torch.cuda.is_available():
-        device = torch.device("cuda")
-    elif torch.backends.mps.is_available():
-        device = torch.device("mps")
-    else:
-        device = torch.device("cpu")
-    
     training_args = TrainingArguments(
         output_dir=train_dir,
         evaluation_strategy="epoch",
@@ -213,14 +243,6 @@ def train_model(model_name: str,
         compute_metrics=compute_metrics,
     )
     trainer.train()
-
-    # inference_path = working_dir / "inference_pipe"
-    # inference_pipe = pipeline("text-classification", tokenizer=tokenizer, model=model)
-    # inference_pipe.save_pretrained(inference_path)
-
-    # inference_path_compressed = working_dir / "inference_pipe.tar.gz"
-    # with tarfile.open(inference_path_compressed, "w:gz") as tar:
-    #     tar.add(inference_path, arcname="")
 
     return model
 
