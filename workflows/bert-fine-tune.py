@@ -403,5 +403,5 @@ def bert_ft(model: str = "bert-base-uncased",
     # Pass the model and other needed arguments directly to the predict_sentiment task
     prediction = predict_sentiment(model=model, text=test_text, model_cache_dir=model_cache_dir)
     
-    # Return results as a JSON serializable object
+    # Return results as a dict
     return eval_results
