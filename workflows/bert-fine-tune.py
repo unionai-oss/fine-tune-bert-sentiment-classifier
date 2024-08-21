@@ -1,6 +1,7 @@
 """Runs ML workflow to fine-tune BERT model on a dataset for sentiment analysis.
 
 AI Pipeline:
+Create container image
 Download dataset
 Download model weights
 Visualize dataset
@@ -16,18 +17,11 @@ Note: this workflow can be broken into modular python files for better organizat
 # ---------------------------
 from pathlib import Path
 import os
-import io
-import base64
 from flytekit import (Deck, ImageSpec, Resources, Secret, current_context,
                       task, workflow)
 from flytekit.types.directory import FlyteDirectory
 from flytekit.types.file import FlyteFile
-import matplotlib as mpl
-import torch
 from transformers import BertForSequenceClassification
-from textwrap import dedent
-import html
-import matplotlib.pyplot as plt
 
 image = ImageSpec(
     packages=[
@@ -89,7 +83,6 @@ def visualize_data(dataset_cache_dir: FlyteDirectory):
     from datasets import load_dataset
     import matplotlib.pyplot as plt
     import pandas as pd
-    from flytekit import current_context, Deck
     import base64
     from textwrap import dedent
 
@@ -189,7 +182,9 @@ def visualize_data(dataset_cache_dir: FlyteDirectory):
 )
 def train_model(model_name: str, 
                 dataset_cache_dir: FlyteDirectory,
-                model_cache_dir: FlyteDirectory) -> BertForSequenceClassification:
+                model_cache_dir: FlyteDirectory,
+                epochs: int = 3
+    ) -> BertForSequenceClassification:
     from datasets import load_dataset
     import numpy as np
     from transformers import(
@@ -197,8 +192,6 @@ def train_model(model_name: str,
         AutoModelForSequenceClassification,
         TrainingArguments,
         Trainer,
-        pipeline,
-
     )
     ctx = current_context()
 
@@ -234,6 +227,7 @@ def train_model(model_name: str,
     training_args = TrainingArguments(
         output_dir=train_dir,
         evaluation_strategy="epoch",
+        num_train_epochs=epochs,
     )
     trainer = Trainer(
         model=model,
@@ -247,6 +241,7 @@ def train_model(model_name: str,
     return model
 
 # %% Evaluate model
+# ---------------------------
 @task(
     container_image=image,
     requests=Resources(cpu="4", mem="12Gi", gpu="1"),  # Using GPU for faster evaluation
@@ -269,7 +264,7 @@ def evaluate_model(
     def tokenize_function(examples):
         return tokenizer(examples["text"], padding="max_length", truncation=True)
 
-    # Use a small subset (100 examples) for evaluation
+    # Use a small subset (200 examples) for evaluation
     eval_dataset = dataset["test"].shuffle(seed=42).select(range(200)).map(tokenize_function)
 
     def compute_metrics(eval_pred):
@@ -309,6 +304,7 @@ def evaluate_model(
 
 
 # %% save model
+# ---------------------------
 @task(
     container_image=image,
     requests=Resources(cpu="2", mem="2Gi"),
@@ -363,7 +359,8 @@ def save_model(model: BertForSequenceClassification, repo_name: str) -> str:
         )
     return f"Model uploaded to Hugging Face Hub: {repo_name}"
 
-# %% Predict sentiment from text
+# %% Predict sentiment
+# ---------------------------
 @task(
     container_image=image,
     requests=Resources(cpu="2", mem="2Gi", gpu="1"),
@@ -387,14 +384,17 @@ def predict_sentiment(model: BertForSequenceClassification, text: str, model_cac
 @workflow
 def bert_ft(model: str = "bert-base-uncased",
             repo_name: str = "my-model",
-            test_text: str = "I love this movie!"):
+            test_text: str = "I love this movie!",
+            epochs: int = 3
+            ) -> dict:
     
     dataset_cache_dir = download_dataset()
     model_cache_dir = download_model(model)
     visualize_data(dataset_cache_dir=dataset_cache_dir)
     model = train_model(model_name=model, 
                         dataset_cache_dir=dataset_cache_dir, 
-                        model_cache_dir=model_cache_dir)
+                        model_cache_dir=model_cache_dir,
+                        epochs=epochs)
     eval_results = evaluate_model(model=model, 
                                   dataset_cache_dir=dataset_cache_dir, 
                                   model_cache_dir=model_cache_dir)
