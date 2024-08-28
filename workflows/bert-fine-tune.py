@@ -40,7 +40,7 @@ image = ImageSpec(
 @task(
     container_image=image,
     cache=True,
-    cache_version="v2",
+    cache_version="v3",
     requests=Resources(cpu="2", mem="2Gi"),
 )
 def download_dataset() -> FlyteDirectory:
@@ -58,7 +58,7 @@ def download_dataset() -> FlyteDirectory:
 @task(
     container_image=image,
     cache=True,
-    cache_version="v2",
+    cache_version="v3",
     requests=Resources(cpu="2", mem="2Gi"),
 )
 def download_model(model: str) -> FlyteDirectory:
@@ -244,7 +244,8 @@ def train_model(model_name: str,
 # ---------------------------
 @task(
     container_image=image,
-    requests=Resources(cpu="4", mem="12Gi", gpu="1"),  # Using GPU for faster evaluation
+    enable_deck=True,
+    requests=Resources(cpu="2", mem="12Gi", gpu="1"),
 )
 def evaluate_model(
     model: BertForSequenceClassification,
@@ -386,7 +387,7 @@ def bert_ft(model: str = "bert-base-uncased",
             repo_name: str = "my-model",
             test_text: str = "I love this movie!",
             epochs: int = 3
-            ) -> dict:
+            ) -> (BertForSequenceClassification, FlyteDirectory, dict, dict):
     
     dataset_cache_dir = download_dataset()
     model_cache_dir = download_model(model)
@@ -404,4 +405,4 @@ def bert_ft(model: str = "bert-base-uncased",
     prediction = predict_sentiment(model=model, text=test_text, model_cache_dir=model_cache_dir)
     
     # Return results as a dict
-    return eval_results
+    return model, model_cache_dir, eval_results, prediction
